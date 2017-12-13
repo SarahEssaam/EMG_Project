@@ -2,11 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from math import ceil
 from sklearn.cluster import KMeans
-from sympy.integrals.heurisch import DiffCache
-
 
 class EMG_Process:
-
     def __init__(self,dataFile,T,DiffTh):
         file = open(dataFile, 'r')
         signal_strings = file.read().split('\n')
@@ -14,28 +11,34 @@ class EMG_Process:
         file.close()
         self.T = T
         self.DiffTh = DiffTh
+        self.N = None
         self.color = {0: 'r', 1: 'b', 2: 'g', 3: 'c', 4: 'm', 5: 'y', 6: 'k'}
 
-    def process(self,method="method1"):
+    def process(self,method="method1",debug=0):
         # visualize the signal and choose 500 to 2500 as an error region to get std dev for
         # plt.plot(signal_init[:3000])
+        #The threshold greatly affects the output
         threshold = self.__getThreshold(self.signal_init[500:2500])
-        plt.figure(0)
-        plt.plot(range(2000,5000),self.signal_init[2000:5000])
-        plt.plot(range(2000,5000),np.ones(3000)*threshold)
-        #print(threshold)
-        print(self.signal_init[1293])
         self.__smooth()
         #threshold = self.__getThreshold(self.signal_smoothed[500:2500])
         #plt.plot(range(0,2000),np.ones(2000)*threshold)
         list_above_signals = self.__split_above_threshold(threshold)
         self.time_stamps, MUAPs = self.__breakSignal(list_above_signals,threshold)
         if method=="method1":
-            #keep as self cuz we'll need themm in plotting
+            #keep as self cuz we'll need them in plotting
             self.templates, self.labels = self.__process_method1(MUAPs)
+            self.N = self.templates.shape[0]
         else :
-            self.templates, self.labels = self.__process_kmeans(self.time_stamps, MUAPs)
-        print (self.time_stamps)
+            self.templates, self.labels = self.__process_kmeans(MUAPs)
+        if debug == 1:
+            # Visualizing the signal and smoothed signal and threshold (for debugging)
+            plt.figure(0)
+            plt.plot(range(30000, 35000), self.signal_init[30000:35000], label="Initial Signal")
+            plt.plot(range(30000, 35000), np.ones(5000) * threshold, label="Threshold")
+            plt.plot(range(30000, 35000), self.signal_smoothed[30000:35000], label="Smoothed signal")
+            plt.legend()
+            plt.savefig('debug.png', bbox_inches='tight')
+
         return self.time_stamps, self.templates
 
     def __getThreshold(self,signal):
@@ -48,22 +51,10 @@ class EMG_Process:
         signal = np.append(signal, np.zeros(self.T - 1))
         for i in range(self.signal_smoothed.size):
             self.signal_smoothed[i] = np.sum(signal[i:i + self.T] * kernel)
-        print(self.signal_smoothed[1290:1295])
-        plt.plot(range(2000,5000),self.signal_smoothed[2000:5000])
 
     def __split_above_threshold(self, threshold):
         mask = np.concatenate(([False], self.signal_smoothed > threshold, [False] ))
         idx = np.flatnonzero(mask[1:] != mask[:-1])
-    #Remove false samples?
-        '''
-        delete_idx = np.array([])
-        for i in range(0,idx.shape[0]-3,3):
-            if (idx[i+1]-idx[i])<20:
-                if (idx[i+2]-idx[i+1])<20:
-                    if (idx[i+3]-idx[i+2])<20:
-                        delete_idx = np.append(delete_idx,i+1,i+2)
-        np.delete(idx,delete_idx)
-        '''
         return [self.signal_init[idx[i]:idx[i+1]] for i in range(0,len(idx),2)]#if idx[i+1]-idx[i] > 20 ]
 
     def __breakSignal(self,above_signals,threshold):
@@ -74,16 +65,9 @@ class EMG_Process:
         for array in above_signals:
             time_stamps = np.append(time_stamps, array_above_indices[0][np.argmax(array)+i])
             i += np.size(array)
-        #Should sth be done if time_stamps[i+1] - time_stamps[i] <20 ?
-        #Should we remove signals that last less than 20 samples above ?
-    #Should MUAPs be extracted from smoothed or what?
         #now get the MUAPs centered around max
-        #plt.plot(signal[0:430])
-        #plt.plot(smooth_signal[0:430])
-        #plt.plot(time_stamps[3],800,marker='*', linestyle='None', color='r')
         MUAPs = [ self.signal_init[i-10:i+11] for i in time_stamps]
         MUAPs = np.array(MUAPs)
-        print(MUAPs.shape)
         return time_stamps, np.array(MUAPs)
 
     def __process_method1(self,MUAPs):
@@ -111,6 +95,12 @@ class EMG_Process:
                 templates[min] = (templates[min] + MUAP)/2
         return templates, labels
 
+    def __process_kmeans(self,MUAPs):
+        if self.N == None:
+            self.N = 4
+        kmeans = KMeans(n_clusters=self.N).fit(MUAPs)
+        return kmeans.cluster_centers_, kmeans.labels_
+
     def plot(self, signal="init", start=0,end=0):
         if signal == "init":
             signal = self.signal_init
@@ -121,7 +111,7 @@ class EMG_Process:
         plt.plot(range(start, end), signal[start:end], linestyle='-', color='k')
         time_stamps = self.time_stamps[self.time_stamps >= start]
         time_stamps = time_stamps[time_stamps < end]
-        max = np.max(signal[start:end])
+        #max = np.max(signal[start:end])
         for i in range(time_stamps.shape[0]):
             # use 7 colors for first 6 MUs and black for the rest
             plt.plot(time_stamps[i], signal[time_stamps[i]], marker='*', linestyle='None', color=self.color.get(self.labels[i],'k'))
